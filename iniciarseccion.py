@@ -9,7 +9,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 
 # --- CONFIGURACIÓN ---
-URL_QLIK = "https://qlik.copservir.com/"
+URL_QLIK = (
+    "https://qlik.copservir.com/sense/app/d39c40fb-a304-4eaf-9a30-50b7279d33f1/"
+    "sheet/4f191cdb-aa40-409d-86b2-497a427a8b6a/state/analysis"
+)
 USUARIO = "Qlikzona29"
 PASSWORD = "pF2A3f2x*"
 
@@ -105,7 +108,7 @@ def ejecutar_automatizacion():
             print("¡Acceso exitoso!")
             # Espera explícita para asegurarnos de que el Hub/Sense esté completamente cargado
             print("Esperando que el Hub se cargue completamente...")
-            cargado = esperar_carga_hub(driver, timeout=20)
+            cargado = esperar_carga_hub(driver, timeout=22)
             if cargado:
                 print("Página cargada. Continuando...")
             else:
@@ -118,7 +121,7 @@ def ejecutar_automatizacion():
         print(f"Error de conexión/navegador: {e}")
     finally:
         # Mantener abierto un momento para ver el resultado antes de cerrar
-        time.sleep(5)
+        time.sleep(20)
         # Descomenta la siguiente línea para cerrar el navegador al terminar
         # driver.quit()
 

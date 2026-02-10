@@ -35,6 +35,21 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 LOG = logging.getLogger(__name__)
 
+# intentar importar helpers de inicio de sesión desde `iniciarseccion.py`
+try:
+	from iniciarseccion import (
+		verificar_inicio_sesion,
+		esperar_carga_hub,
+		login_con_action_chains,
+		login_con_pyautogui,
+	)
+except Exception:
+	# si no está disponible, definimos nombres a None y usamos el login interno como fallback
+	verificar_inicio_sesion = None
+	esperar_carga_hub = None
+	login_con_action_chains = None
+	login_con_pyautogui = None
+
 tiempo=30
 corto_tiempo=2
 
@@ -1481,55 +1496,95 @@ def run_once() -> None:
 			time.sleep(2)
 
 		try:
-			# Asegurar foco antes de escribir el username
+			# Intentar login usando los helpers definidos en `iniciarseccion.py` si están disponibles.
+			# Si no existen o fallan, caeremos al fallback con la lógica interna previa.
+			logged = False
 			try:
-				bring_browser_to_front(driver)
+				if login_con_action_chains or login_con_pyautogui:
+					LOG.info('Intentando login con iniciarseccion.py...')
+					if login_con_action_chains:
+						try:
+							if login_con_action_chains(driver):
+								LOG.info('Login exitoso vía login_con_action_chains')
+								logged = True
+						except Exception:
+							LOG.debug('login_con_action_chains falló', exc_info=True)
+					if not logged and login_con_pyautogui:
+						try:
+							# refrescar para limpiar campos y asegurar foco antes del intento con pyautogui
+							driver.refresh()
+							time.sleep(2)
+							if login_con_pyautogui(driver):
+								LOG.info('Login exitoso vía login_con_pyautogui')
+								logged = True
+						except Exception:
+							LOG.debug('login_con_pyautogui falló', exc_info=True)
 			except Exception:
-				LOG.debug('bring_browser_to_front falló antes de tipear username', exc_info=True)
-		except Exception:
-			pass
-		ok = type_like_keyboard(driver, username, delay=0.08, click_first=True)
+				LOG.debug('Error ejecutando helpers de iniciarseccion', exc_info=True)
 
-		success = False
-		try:
-			active = driver.switch_to.active_element
-			val = active.get_attribute('value') or ''
-			if username in val:
-				success = True
-		except Exception:
-			pass
-
-		try:
-			parsed = urllib.parse.urlparse(url)
-			host = parsed.netloc
-		except Exception:
-			host = 'qlik'
-
-		if not success:
-			LOG.info('Username no detectado; enviando por sistema')
-			if send_text_via_system(driver, username, delay=0.08):
-				LOG.info("Envío por sistema realizado para '%s'", username)
+			if logged:
+				# dar un margen para que el Hub/Sense termine de cargarse
 				try:
-					if send_keys_via_pywinauto('{TAB}', host):
-						LOG.info('Tab enviado vía pywinauto (tras username)')
+					if esperar_carga_hub:
+						esperar_carga_hub(driver, timeout=20)
 				except Exception:
 					pass
-		else:
-			LOG.info('Username detectado en elemento activo')
+				submit_sent = True
+				wrote_pwd = True
+			else:
+				# Fallback: usar la lógica interna previa (escribir username/password vía sistema)
+				try:
+					# Asegurar foco antes de escribir el username
+					try:
+						bring_browser_to_front(driver)
+					except Exception:
+						LOG.debug('bring_browser_to_front falló antes de tipear username', exc_info=True)
+				except Exception:
+					pass
+				ok = type_like_keyboard(driver, username, delay=0.08, click_first=True)
 
-		LOG.info('Enviando password por sistema')
-		if send_text_via_system(driver, password, delay=0.08):
-			wrote_pwd = True
-			LOG.info('Password enviado por sistema')
-			try:
-				if send_keys_via_pywinauto('{TAB}{ENTER}', host):
-					submit_sent = True
-					LOG.info('Submit intentado via pywinauto (final)')
+				success = False
+				try:
+					active = driver.switch_to.active_element
+					val = active.get_attribute('value') or ''
+					if username in val:
+						success = True
+				except Exception:
+					pass
+
+				try:
+					parsed = urllib.parse.urlparse(url)
+					host = parsed.netloc
+				except Exception:
+					host = 'qlik'
+
+				if not success:
+					LOG.info('Username no detectado; enviando por sistema')
+					if send_text_via_system(driver, username, delay=0.08):
+						LOG.info("Envío por sistema realizado para '%s'", username)
+						try:
+							if send_keys_via_pywinauto('{TAB}', host):
+								LOG.info('Tab enviado vía pywinauto (tras username)')
+						except Exception:
+							pass
 				else:
-					LOG.debug('pywinauto no envió submit, intentando Enter por keybd_event')
-					_send_enter_windows()
-			except Exception:
-				LOG.debug('Error intentando submit via pywinauto', exc_info=True)
+					LOG.info('Username detectado en elemento activo')
+
+				LOG.info('Enviando password por sistema')
+				if send_text_via_system(driver, password, delay=0.08):
+					wrote_pwd = True
+					LOG.info('Password enviado por sistema')
+					try:
+						if send_keys_via_pywinauto('{TAB}{ENTER}', host):
+							submit_sent = True
+							LOG.info('Submit intentado via pywinauto (final)')
+						else:
+							LOG.debug('pywinauto no envió submit, intentando Enter por keybd_event')
+							_send_enter_windows()
+					except Exception:
+						LOG.debug('Error intentando submit via pywinauto', exc_info=True)
+		except Exception:
+			LOG.exception('Error en el flujo de login (intentando iniciarseccion + fallback)')
 
 		try:
 			# Aumentamos el tiempo de espera después del submit porque
@@ -1539,7 +1594,7 @@ def run_once() -> None:
 				LOG.info('Manteniendo navegador abierto %s segundos para inspección (post-login)...', _keep_open_seconds)
 				time.sleep(_keep_open_seconds)
 				
-			   # --- Mostrar mes anterior ---
+			# --- Mostrar mes anterior ---
 			try:
 				# 1. Obtener fecha actual del sistema
 				hoy = datetime.now()
