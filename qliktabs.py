@@ -1411,24 +1411,37 @@ def _maybe_auto_upload(extracted: dict) -> None:
 	except Exception:
 		LOG.debug('_maybe_auto_upload: fallo', exc_info=True)
 
-def grid_listo(driver: webdriver.Chrome, selector: str, timeout: float = 20.0) -> bool:
+def grid_listo(driver: webdriver.Chrome, selector: str, selector_type: str = 'CSS_SELECTOR', timeout: float = 20.0) -> bool:
     """Verificar si el grid está listo (visible y con contenido).
     
     Intenta encontrar el elemento y comprobar que está visible.
     Devuelve True si el grid está listo, False si no.
+    
+    Args:
+        driver: El driver de Selenium
+        selector: El selector (CSS o XPATH)
+        selector_type: 'CSS_SELECTOR' o 'XPATH' (default: 'CSS_SELECTOR')
+        timeout: Tiempo máximo de espera en segundos
     """
     try:
         end = time.time() + float(timeout)
+        
+        # Determinar el tipo de selector
+        if selector_type.upper() == 'XPATH':
+            by = By.XPATH
+        else:
+            by = By.CSS_SELECTOR
+        
         while time.time() < end:
             try:
-                el = driver.find_element(By.CSS_SELECTOR, selector)
+                el = driver.find_element(by, selector)
                 if el.is_displayed():
-                    LOG.debug("grid_listo: elemento visible y listo: %s", selector)
+                    LOG.debug("grid_listo: elemento visible y listo: %s (tipo: %s)", selector, selector_type)
                     return True
             except Exception:
                 pass
             time.sleep(0.5)
-        LOG.debug("grid_listo: timeout esperando elemento: %s", selector)
+        LOG.debug("grid_listo: timeout esperando elemento: %s (tipo: %s)", selector, selector_type)
         return False
     except Exception:
         LOG.exception("grid_listo: excepción inesperada")
@@ -1728,18 +1741,104 @@ def run_once() -> None:
 																except Exception:
 																	LOG.debug('bring_browser_to_front falló en segunda URL', exc_info=True)
 
-																
-																# --- Iniciar interacción completa en la segunda URL ---
+																# --- REPETIR EL MISMO FLUJO DE CAMBIO DE MES EN LA SEGUNDA URL ---
 																try:
-																	sel2 = '//*[@id="grid"]/div[17]'
-																	try:
-																		if hover_on_xpath(driver, sel2, timeout=5.0):
-																			LOG.info('hover_on_xpath: hover realizado en segunda URL en %s', sel2)
-																			try:
-																				time.sleep(6)
-																			except Exception:
-																				pass
+																	# 1. Obtener fecha actual del sistema
+																	hoy = datetime.now()
+																	mes_actual = hoy.month
+																	year_actual = hoy.year
+																	
+																	# Calcular mes anterior (si es enero, el anterior es 12)
+																	mes_anterior = 12 if mes_actual == 1 else mes_actual - 1
+																	
+																	# Configuración de espera explícita
+																	wait = WebDriverWait(driver, 40)
+																	xpath_contenedor = (
+																		'//*[@id="qv-page-container"]/div[3]/div[1]/div/div[4]/div[2]/div[2]/div/'
+																		'div[4]/div[1]/div/div/div[1]/div/div[1]'
+																	)
 
+																	# --- PASO 1: Abrir contenedor ---
+																	btn_contenedor = wait.until(
+																		EC.element_to_be_clickable((By.XPATH, xpath_contenedor))
+																	)
+																	btn_contenedor.click()
+																	time.sleep(4) # Pausa solicitada tras abrir
+																	
+																	# --- PASO 2: Escribir mes anterior ---
+																	actions = webdriver.ActionChains(driver)
+																	actions.send_keys(str(mes_anterior)).perform()
+																	time.sleep(3) # Pausa para que el buscador de Qlik filtre
+																	
+																	# --- PASO 3: Navegar con teclado (Seleccionar el mes) ---
+																	actions.send_keys(Keys.TAB).send_keys(Keys.TAB).send_keys(Keys.SPACE).perform()
+																	time.sleep(4) # Pausa para procesar la selección
+																	
+																	# --- PASO 4: Aplicar primera vez ---
+																	btn_aplicar = wait.until(
+																		EC.element_to_be_clickable((By.XPATH, '//*[@id="actions-toolbar"]/div[4]/div[3]/button'))
+																	)
+																	btn_aplicar.click()
+																	time.sleep(2) # Pausa tras clic en aplicar
+
+																	# 🔒 Espera a que desaparezca el botón (indica que Qlik terminó de recalcular)
+																	wait.until(EC.invisibility_of_element(btn_aplicar))
+																	
+																	# --- PASO 5: Reabrir para quitar mes actual ---
+																	btn_contenedor = wait.until(
+																		EC.element_to_be_clickable((By.XPATH, xpath_contenedor))
+																	)
+																	btn_contenedor.click()
+																	time.sleep(3.5) # Pausa para que cargue la lista de selección
+																	
+																	# --- PASO 6: Quitar selección actual (Navegación teclado) ---
+																	actions_2 = webdriver.ActionChains(driver)
+																	actions_2.send_keys(Keys.TAB).send_keys(Keys.ARROW_DOWN).send_keys(Keys.SPACE).perform()
+																	time.sleep(3) # Pausa tras desmarcar el mes
+																	
+																	# --- PASO 7: Aplicar nuevamente ---
+																	btn_aplicar_final = wait.until(
+																		EC.element_to_be_clickable((By.XPATH, '//*[@id="actions-toolbar"]/div[4]/div[3]/button'))
+																	)
+																	btn_aplicar_final.click()
+																	
+																	# 🔒 Espera FINAL
+																	wait.until(EC.invisibility_of_element(btn_aplicar_final))
+																	time.sleep(4) # Pausa final de seguridad
+
+																	LOG.info("Proceso completado en segunda URL: Mes anterior (%s) seleccionado.", mes_anterior)
+
+																	# Define el selector del grid para la segunda URL
+																	grid_sel2 = '//*[@id="grid"]/div[17]'
+																	LOG.info("Esperando grid en segunda URL: %s", grid_sel2)
+																	
+																	# Espera SOLO UNA VEZ a que el grid esté visible en segunda URL
+																	WebDriverWait(driver, 30).until(
+																		EC.visibility_of_element_located((By.XPATH, grid_sel2))
+																	)
+																	LOG.info("Grid visible en segunda URL: %s", grid_sel2)
+																	
+																	# Comprueba si el grid está listo (usa SIEMPRE grid_sel2)
+																	if not grid_listo(driver, grid_sel2, selector_type='XPATH', timeout=20):
+																		LOG.warning("Grid no listo en segunda URL, se omite hover/export: %s", grid_sel2)
+																		return
+																	
+																	# Trae el navegador al frente (opcional)
+																	try:
+																		bring_browser_to_front(driver)
+																	except Exception:
+																		LOG.debug('bring_browser_to_front falló antes del hover en segunda URL', exc_info=True)
+																	
+																	# Hover sobre el grid en segunda URL
+																	if hover_on_xpath(driver, grid_sel2, timeout=5.0):
+																		LOG.info("hover_on_xpath: hover realizado correctamente en segunda URL: %s", grid_sel2)
+																		try:
+																			time.sleep(6)
+																		except Exception:
+																			pass
+
+																		try:
+																			# Después del hover, localizar el botón "Más" y clickarlo
 																			btn_sel2 = (
 																				'#grid > div:nth-child(17) > '
 																				'div.object-and-panel-wrapper > div > '
@@ -1752,102 +1851,106 @@ def run_once() -> None:
 																					time.sleep(1)
 																				except Exception:
 																					pass
-																				export_group_sel2 = '#export-group'
-																				export_sel2 = '#export'
+																				try:
+																					# Secuencia de menú: 'Descargar como...' -> 'Datos' -> 'Exportar'
+																					export_group_sel2 = '#export-group'
+																					export_sel2 = '#export'
 
-																				if click_button_by_selector(driver, export_group_sel2, timeout=5.0):
-																					LOG.info("click: export-group encontrado y clicado en segunda URL: %s", export_group_sel2)
-																					try:
-																						time.sleep(0.6)
-																					except Exception:
-																						pass
-																					if click_button_by_selector(driver, export_sel2, timeout=5.0):
-																						LOG.info("click: export encontrado y clicado en segunda URL: %s", export_sel2)
+																					if click_button_by_selector(driver, export_group_sel2, timeout=5.0):
+																						LOG.info("click: export-group encontrado y clicado en segunda URL: %s", export_group_sel2)
 																						try:
 																							time.sleep(0.6)
 																						except Exception:
 																							pass
+																						if click_button_by_selector(driver, export_sel2, timeout=5.0):
+																							LOG.info("click: export encontrado y clicado en segunda URL: %s", export_sel2)
+																							try:
+																								time.sleep(0.6)
+																							except Exception:
+																								pass
 
-																						# En esta segunda URL no existe el botón 'table-export'.
-																						# Directamente intentar clicar el enlace de descarga (a.export-url)
-																						try:
-																							download_start_ts2 = time.time()
-																							# Primero intentar el anchor conocido
-																							if click_export_url(driver, selector='a.export-url', timeout=6.0):
-																								LOG.info("click_export_url: enlace de descarga clicado correctamente en segunda URL")
-																								clicked_download = True
-																							else:
-																								# Fallback: buscar anchors con .xlsx o texto 'export'/'exportar'
-																								if click_export_link_with_fallback(driver, timeout=6.0):
-																									LOG.info("click_export_link_with_fallback: enlace de descarga clicado en segunda URL")
+																							# En esta segunda URL no existe el botón 'table-export'.
+																							# Directamente intentar clicar el enlace de descarga (a.export-url)
+																							try:
+																								download_start_ts2 = time.time()
+																								# Primero intentar el anchor conocido
+																								if click_export_url(driver, selector='a.export-url', timeout=6.0):
+																									LOG.info("click_export_url: enlace de descarga clicado correctamente en segunda URL")
 																									clicked_download = True
 																								else:
-																									clicked_download = False
-
-																							if clicked_download:
-																								try:
-																									time.sleep(8)
-																								except Exception:
-																									pass
-
-																								downloads_dir2 = os.path.join(Path.home(), 'Downloads')
-																								found2 = find_latest_downloaded_file(downloads_dir2, pattern='*.xlsx', since_ts=download_start_ts2, timeout=30.0)
-																								if found2:
-																									LOG.info('Archivo descargado detectado en segunda URL: %s', found2)
-																									extracted2 = extract_excel_contents(found2)
-																									if extracted2 is not None:
-																										out_file2 = Path('exported_data_2.json')
-																										try:
-																											with out_file2.open('w', encoding='utf-8') as fh:
-																												json.dump(extracted2, fh, ensure_ascii=False, indent=2)
-																											LOG.info('Contenido del Excel guardado en %s', str(out_file2))
-																										except Exception:
-																											LOG.exception('No se pudo escribir %s', str(out_file2))
-
-																										# Subida automática con target tab por defecto en 'Sheet1'
-																										try:
-																											default_sa = r'C:\Users\jperdomolc\Pictures\Qlik\estados-475119-24642bda896a.json'
-																											default_sid = '1LTiGfBQd_Qd6zhmCGEHpX0Jgaa3KuMkuuE8oHwQ6x3M'
-																											sa = _os.environ.get('GOOGLE_SERVICE_ACCOUNT_JSON', default_sa)
-																											sid = _os.environ.get('GOOGLE_SHEET_ID', default_sid)
-																											target = _os.environ.get('GOOGLE_SHEET_TAB', 'Sheet1')
-
-																											if sa and sid:
-																												LOG.info('Intentando subida automática a Google Sheets (target tab=%s)...', target)
-																												ok = upload_to_google_sheets(extracted2, sid, sa, clear=True, target_sheet=target)
-																												if ok:
-																													LOG.info('Subida automática a Google Sheets (Sheet1) finalizada con éxito')
-																												else:
-																													LOG.info('Subida automática a Google Sheets (Sheet1) falló')
-																											else:
-																												LOG.debug('No hay credenciales/ID disponibles para Google Sheets (segunda URL)')
-																										except Exception:
-																											LOG.debug('Fallo al intentar subida automática a Google Sheets en segunda URL', exc_info=True)
-																										try:
-																											p2 = Path(found2)
-																											if p2.exists():
-																												p2.unlink()
-																												LOG.info('Archivo descargado eliminado en segunda URL: %s', str(p2))
-																										except Exception:
-																											LOG.debug('No se pudo eliminar el archivo descargado en segunda URL %s', found2, exc_info=True)
+																									# Fallback: buscar anchors con .xlsx o texto 'export'/'exportar'
+																									if click_export_link_with_fallback(driver, timeout=6.0):
+																										LOG.info("click_export_link_with_fallback: enlace de descarga clicado en segunda URL")
+																										clicked_download = True
 																									else:
-																										LOG.info('No se pudo extraer contenido del Excel en segunda URL: %s', found2)
-																								else:
-																									LOG.info('No se detectó archivo .xlsx en %s dentro del timeout en segunda URL', downloads_dir2)
-																						except Exception:
-																							LOG.debug('Error al intentar click_export_url o procesar descarga en segunda URL', exc_info=True)
+																										clicked_download = False
+
+																								if clicked_download:
+																									try:
+																										time.sleep(8)
+																									except Exception:
+																										pass
+
+																									downloads_dir2 = os.path.join(Path.home(), 'Downloads')
+																									found2 = find_latest_downloaded_file(downloads_dir2, pattern='*.xlsx', since_ts=download_start_ts2, timeout=30.0)
+																									if found2:
+																										LOG.info('Archivo descargado detectado en segunda URL: %s', found2)
+																										extracted2 = extract_excel_contents(found2)
+																										if extracted2 is not None:
+																											out_file2 = Path('exported_data_2.json')
+																											try:
+																												with out_file2.open('w', encoding='utf-8') as fh:
+																													json.dump(extracted2, fh, ensure_ascii=False, indent=2)
+																												LOG.info('Contenido del Excel guardado en %s', str(out_file2))
+																											except Exception:
+																												LOG.exception('No se pudo escribir %s', str(out_file2))
+
+																											# Subida automática con target tab por defecto en 'Sheet1'
+																											try:
+																												default_sa = r'C:\Users\jperdomolc\Pictures\Qlik\estados-475119-24642bda896a.json'
+																												default_sid = '1LTiGfBQd_Qd6zhmCGEHpX0Jgaa3KuMkuuE8oHwQ6x3M'
+																												sa = _os.environ.get('GOOGLE_SERVICE_ACCOUNT_JSON', default_sa)
+																												sid = _os.environ.get('GOOGLE_SHEET_ID', default_sid)
+																												target = _os.environ.get('GOOGLE_SHEET_TAB', 'Sheet1')
+
+																												if sa and sid:
+																													LOG.info('Intentando subida automática a Google Sheets (target tab=%s)...', target)
+																													ok = upload_to_google_sheets(extracted2, sid, sa, clear=True, target_sheet=target)
+																													if ok:
+																														LOG.info('Subida automática a Google Sheets (Sheet1) finalizada con éxito')
+																													else:
+																														LOG.info('Subida automática a Google Sheets (Sheet1) falló')
+																												else:
+																													LOG.debug('No hay credenciales/ID disponibles para Google Sheets (segunda URL)')
+																											except Exception:
+																												LOG.debug('Fallo al intentar subida automática a Google Sheets en segunda URL', exc_info=True)
+																											try:
+																												p2 = Path(found2)
+																												if p2.exists():
+																													p2.unlink()
+																													LOG.info('Archivo descargado eliminado en segunda URL: %s', str(p2))
+																											except Exception:
+																												LOG.debug('No se pudo eliminar el archivo descargado en segunda URL %s', found2, exc_info=True)
+																										else:
+																											LOG.info('No se pudo extraer contenido del Excel en segunda URL: %s', found2)
+																									else:
+																										LOG.info('No se detectó archivo .xlsx en %s dentro del timeout en segunda URL', downloads_dir2)
+																							except Exception:
+																								LOG.debug('Error al intentar click_export_url o procesar descarga en segunda URL', exc_info=True)
+																						else:
+																							LOG.info('No se pudo clicar el item export (%s) en segunda URL', export_sel2)
 																					else:
-																						LOG.info('No se pudo clicar el item export (%s) en segunda URL', export_sel2)
-																				else:
-																					LOG.info('No se pudo clicar el grupo export-group (%s) en segunda URL', export_group_sel2)
+																						LOG.info('No se pudo clicar el grupo export-group (%s) en segunda URL', export_group_sel2)
+																				except Exception:
+																					LOG.debug('Error al intentar clicar el botón Más en segunda URL', exc_info=True)
 																			else:
 																				LOG.info("No se pudo clicar el botón 'Más' (%s) en segunda URL", btn_sel2)
-																		else:
-																			LOG.info('hover_on_xpath: no se pudo hacer hover en %s en segunda URL (continuando)', sel2)
-																	except Exception:
-																		LOG.debug('Error en la interacción de la segunda URL', exc_info=True)
+																		except Exception:
+																			LOG.debug('Error al intentar clicar el botón Más en segunda URL', exc_info=True)
+																	else:
+																		LOG.info("hover_on_xpath: no se pudo hacer hover en %s en segunda URL (continuando)", grid_sel2)
 																except Exception:
-																	LOG.debug('Fallo preparando interacción en la segunda URL', exc_info=True)
+																	LOG.debug('Error en el flujo de cambio de mes en segunda URL', exc_info=True)
 															except Exception:
 																LOG.debug('Error navegando a la segunda URL', exc_info=True)
 														else:

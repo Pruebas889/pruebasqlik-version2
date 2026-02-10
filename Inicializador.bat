@@ -1,4 +1,4 @@
 @echo off
-python "C:\Users\jperdomolc\Videos\Qliktabs copia\iniciarseccion.py"
-python "C:\Users\jperdomolc\Videos\Qliktabs copia\qliktabs.py"
+python "C:\Users\cmarroquin\Music\pruebasqlik-version2\iniciarseccion.py"
+python "C:\Users\cmarroquin\Music\pruebasqlik-version2\qliktabs.py"
 pause
